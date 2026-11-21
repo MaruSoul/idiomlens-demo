@@ -234,6 +234,7 @@ import { MindARThree } from 'mindar-image-three';
 const IDIOMS = [
   {
     name: 'Break the ice',
+    audio: './audio/break_the_ice.mp3',
     meaning: 'зняти напругу, почати розмову в незнайомій компанії',
     color: 0x134a8c,
     videoId: 'SxlFu4XKb10', start: 0,
@@ -243,6 +244,7 @@ const IDIOMS = [
   },
   {
     name: 'Spill the beans',
+    audio: './audio/spill_the_beans.mp3',
     meaning: 'розкрити таємницю, проговоритися',
     color: 0x7a3414,
     videoId: 'ReTB2vTqATc', start: 0,
@@ -252,6 +254,7 @@ const IDIOMS = [
   },
   {
     name: 'Hit the books',
+    audio: './audio/hit_the_books.mp3',
     meaning: 'старанно вчитися, засісти за підручники',
     color: 0x276332,
     videoId: 'cHvKQeXdkAU', start: 0,
@@ -298,6 +301,8 @@ function showIdiom(i) {
   const d = IDIOMS[i];
   $('idiomName').textContent = d.name;
   $('idiomMeaning').textContent = d.meaning;
+  audioPlayer.src = d.audio;
+  audioPlayer.load();
   contextSheet.classList.remove('open');
   idiomSheet.classList.add('open');
   setScanning(false);
@@ -305,16 +310,56 @@ function showIdiom(i) {
   if (navigator.vibrate) navigator.vibrate(30);
 }
 
+function pickVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  return voices.find(v => v.lang === 'en-US' && v.localService)
+      || voices.find(v => v.lang === 'en-US')
+      || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('en'));
+}
+
+// Вимова: MP3-запис (NFR1.17), а синтезатор мовлення браузера – запасний варіант
+const audioPlayer = new Audio();
+audioPlayer.preload = 'auto';
+
+function play() {
+  if (current === null) return;
+  const src = IDIOMS[current].audio;
+  if (!src) { speak(); return; }
+  if (!audioPlayer.src.endsWith(src.slice(1))) audioPlayer.src = src;
+  audioPlayer.currentTime = 0;
+  audioPlayer.play().catch(() => speak());
+}
+
 function speak() {
   if (current === null) return;
   const synth = window.speechSynthesis;
-  if (!synth) { toast('Цей браузер не підтримує відтворення вимови'); return; }
-  synth.cancel();
+  if (!synth || !window.SpeechSynthesisUtterance) {
+    toast('Цей браузер не підтримує відтворення вимови');
+    return;
+  }
   const u = new SpeechSynthesisUtterance(IDIOMS[current].name);
-  u.lang = 'en-US'; u.rate = 0.85;
-  const voice = synth.getVoices().find(v => v.lang && v.lang.startsWith('en'));
+  u.lang = 'en-US';
+  u.rate = 0.85;
+  u.volume = 1;
+  const voice = pickVoice();
   if (voice) u.voice = voice;
-  synth.speak(u);
+  let started = false;
+  u.onstart = () => { started = true; };
+  u.onerror = (e) => {
+    if (e.error !== 'interrupted' && e.error !== 'canceled') {
+      toast('Не вдалося відтворити вимову: ' + e.error);
+    }
+  };
+  // Safari: cancel() безпосередньо перед speak() може «з'їсти» фразу,
+  // тому зупиняємо лише те, що вже звучить, і говоримо з паузою
+  if (synth.speaking || synth.pending) synth.cancel();
+  setTimeout(() => {
+    synth.resume();
+    synth.speak(u);
+  }, 60);
+  setTimeout(() => {
+    if (!started) toast('Вимова не запустилася. На iPhone вимкніть беззвучний режим і перевірте гучність.', 5000);
+  }, 2500);
 }
 
 function showContext() {
@@ -349,6 +394,7 @@ function backToIdiom() {
 
 function rescan() {
   window.speechSynthesis && window.speechSynthesis.cancel();
+  audioPlayer.pause();
   $('videoWrap').innerHTML = '';
   idiomSheet.classList.remove('open');
   contextSheet.classList.remove('open');
@@ -393,12 +439,15 @@ async function start() {
 }
 
 $('startBtn').addEventListener('click', start);
-$('speakBtn').addEventListener('click', speak);
+$('speakBtn').addEventListener('click', play);
 $('contextBtn').addEventListener('click', showContext);
 $('backBtn').addEventListener('click', backToIdiom);
 $('rescanBtn').addEventListener('click', rescan);
 // Голоси завантажуються асинхронно
-if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = () => {};
+if (window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+}
 </script>
 </body>
 </html>
