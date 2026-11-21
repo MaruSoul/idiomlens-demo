@@ -179,7 +179,7 @@
   <div class="grabber"></div>
   <div class="sheet-head">
     <span class="label">Ідіома</span>
-    <span class="found">Картку розпізнано</span>
+    <span class="found" id="foundLabel">Картку розпізнано</span>
   </div>
   <h2 class="idiom-name" id="idiomName"></h2>
   <button class="btn" id="speakBtn"><span class="play-ico"></span>Прослухати вимову</button>
@@ -268,6 +268,8 @@ const $ = (id) => document.getElementById(id);
 const startScreen = $('start'), scanFrame = $('scanFrame'), hint = $('hint');
 const idiomSheet = $('idiomSheet'), contextSheet = $('contextSheet');
 let mindar = null, current = null, running = false;
+// Вимірювання для тестів на прийняття: час від початку сканування до розпізнавання
+let scanStart = null;
 
 function toast(msg, ms = 3200) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
@@ -307,6 +309,13 @@ function showIdiom(i) {
   idiomSheet.classList.add('open');
   setScanning(false);
   setStatus('Картку розпізнано');
+  if (scanStart !== null) {
+    const sec = (performance.now() - scanStart) / 1000;
+    $('foundLabel').textContent = 'Розпізнано за ' + sec.toFixed(1).replace('.', ',') + ' с';
+    scanStart = null;
+  } else {
+    $('foundLabel').textContent = 'Картку розпізнано';
+  }
   if (navigator.vibrate) navigator.vibrate(30);
 }
 
@@ -401,6 +410,7 @@ function rescan() {
   current = null;
   setScanning(true);
   setStatus('Пошук AR-маркера…');
+  scanStart = performance.now();
 }
 
 async function start() {
@@ -431,6 +441,7 @@ async function start() {
     startScreen.classList.add('hidden');
     setScanning(true);
     setStatus('Пошук AR-маркера…');
+    scanStart = performance.now();
   } catch (e) {
     console.error(e);
     btn.disabled = false; btn.textContent = 'Сканувати';
