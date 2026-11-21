@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>IdiomLens</title>
+<meta name="description" content="IdiomLens – вивчення англійських ідіом за AR-картками">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23134a8c'/><circle cx='50' cy='50' r='24' fill='none' stroke='white' stroke-width='9'/><circle cx='50' cy='50' r='8' fill='white'/></svg>">
+<style>
+  :root {
+    --ink: #15181d;
+    --muted: #5b6270;
+    --paper: #fbfaf6;
+    --card: #ffffff;
+    --line: #e3e1da;
+    --accent: #134a8c;
+    --accent-ink: #ffffff;
+    --ok: #1f8a4c;
+    --shadow: 0 -8px 30px rgba(0,0,0,.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button { font: inherit; cursor: pointer; }
+
+  /* AR-контейнер на весь екран */
+  #ar { position: fixed; inset: 0; background: #0d0f12; }
+  #ar video { object-fit: cover; }
+
+  /* Верхня панель */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+    background: linear-gradient(rgba(0,0,0,.55), rgba(0,0,0,0));
+    color: #fff;
+  }
+  .brand { font-weight: 800; letter-spacing: .2px; font-size: 19px; }
+  .brand span { opacity: .75; font-weight: 500; }
+  .pill {
+    font-size: 13px; padding: 4px 10px; border-radius: 999px;
+    background: rgba(255,255,255,.18); backdrop-filter: blur(6px);
+  }
+
+  /* Стартовий екран (NFR1.1) */
+  #start {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 0 16px calc(env(safe-area-inset-bottom) + 24px);
+    background: radial-gradient(120% 80% at 50% 0%, #1d5aa3 0%, #0f2747 70%);
+    color: #fff;
+  }
+  #start .hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 14px; }
+  #start h1 { margin: 0; font-size: 30px; line-height: 1.15; }
+  #start p { margin: 0; max-width: 340px; opacity: .85; }
+  .frame-demo {
+    width: 150px; height: 210px; border-radius: 14px; position: relative; margin-bottom: 8px;
+    background: rgba(255,255,255,.06);
+  }
+  .frame-demo::before, .frame-demo::after,
+  .corners::before, .corners::after {
+    content: ""; position: absolute; width: 34px; height: 34px; border: 4px solid #fff;
+  }
+  .frame-demo::before { top: 0; left: 0; border-right: 0; border-bottom: 0; border-radius: 14px 0 0 0; }
+  .frame-demo::after { top: 0; right: 0; border-left: 0; border-bottom: 0; border-radius: 0 14px 0 0; }
+  .corners::before { bottom: 0; left: 0; border-right: 0; border-top: 0; border-radius: 0 0 0 14px; }
+  .corners::after { bottom: 0; right: 0; border-left: 0; border-top: 0; border-radius: 0 0 14px 0; }
+  .corners { position: absolute; inset: 0; }
+
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; min-height: 52px; padding: 12px 18px;
+    border: 0; border-radius: 14px;
+    background: var(--accent); color: var(--accent-ink);
+    font-weight: 700; font-size: 17px;
+  }
+  .btn.light { background: #fff; color: var(--accent); }
+  .btn.ghost { background: transparent; color: var(--accent); border: 2px solid var(--line); }
+  .btn:active { transform: scale(.985); }
+  .btn[disabled] { opacity: .6; }
+  .note { font-size: 13px; opacity: .7; text-align: center; margin-top: 12px; }
+
+  /* Рамка сканування поверх камери */
+  #scanFrame {
+    position: fixed; z-index: 10; left: 50%; top: 45%;
+    width: min(62vw, 300px); aspect-ratio: 5 / 7; transform: translate(-50%, -50%);
+    pointer-events: none; transition: opacity .25s;
+  }
+  #scanFrame::before, #scanFrame::after { content: ""; position: absolute; width: 40px; height: 40px; border: 5px solid #fff; }
+  #scanFrame::before { top: 0; left: 0; border-right: 0; border-bottom: 0; border-radius: 16px 0 0 0; }
+  #scanFrame::after { top: 0; right: 0; border-left: 0; border-bottom: 0; border-radius: 0 16px 0 0; }
+  #scanFrame .corners::before, #scanFrame .corners::after { width: 40px; height: 40px; border-width: 5px; }
+  #scanFrame .line {
+    position: absolute; left: 8%; right: 8%; height: 3px; top: 10%;
+    background: linear-gradient(90deg, transparent, #7fd1ff, transparent);
+    animation: sweep 2.2s ease-in-out infinite;
+  }
+  @keyframes sweep { 0%,100% { top: 10%; } 50% { top: 88%; } }
+  #hint {
+    position: fixed; z-index: 10; left: 16px; right: 16px; text-align: center;
+    bottom: calc(env(safe-area-inset-bottom) + 28px);
+    color: #fff; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.6);
+  }
+  #hint small { display: block; font-weight: 400; opacity: .85; margin-top: 4px; }
+
+  /* Нижня панель (NFR1.2–NFR1.4, FR2) */
+  .sheet {
+    position: fixed; z-index: 40; left: 0; right: 0; bottom: 0;
+    max-height: 78vh; overflow-y: auto;
+    background: var(--card); color: var(--ink);
+    border-radius: 22px 22px 0 0; box-shadow: var(--shadow);
+    padding: 10px 16px calc(env(safe-area-inset-bottom) + 18px);
+    transform: translateY(105%); transition: transform .32s cubic-bezier(.2,.8,.2,1);
+  }
+  .sheet.open { transform: translateY(0); }
+  .grabber { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 4px auto 12px; }
+  .sheet-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .back {
+    width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink); font-size: 18px; flex: none;
+  }
+  .label { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 700; }
+  .found { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-size: 13px; font-weight: 700; margin-left: auto; }
+  .found::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .idiom-name { font-family: Georgia, "Times New Roman", serif; font-size: 32px; line-height: 1.15; margin: 6px 0 12px; }
+  .meaning-box { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 12px 0 14px; }
+  .meaning-box p { margin: 4px 0 0; font-size: 18px; }
+  .stack { display: grid; gap: 10px; }
+  .play-ico { width: 0; height: 0; border-left: 13px solid currentColor; border-top: 8px solid transparent; border-bottom: 8px solid transparent; }
+  .video-wrap { position: relative; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000; margin: 10px 0 12px; }
+  .video-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .video-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; text-align: center; padding: 16px; font-size: 14px; opacity: .8; }
+  blockquote { margin: 0 0 12px; padding: 10px 14px; border-left: 4px solid var(--accent); background: var(--paper); border-radius: 0 12px 12px 0; font-style: italic; }
+  .src { font-size: 13px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .6px; font-weight: 700; }
+  .expl h3 { font-size: 15px; margin: 12px 0 4px; }
+  .expl p { margin: 0; }
+  .yt-link { display: block; text-align: center; margin-top: 10px; color: var(--accent); font-weight: 600; }
+
+  #toast {
+    position: fixed; z-index: 60; left: 16px; right: 16px; top: calc(env(safe-area-inset-top) + 64px);
+    background: #2a2f37; color: #fff; padding: 12px 14px; border-radius: 12px; font-size: 14px;
+    opacity: 0; transform: translateY(-8px); transition: .25s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: none; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="ar"></div>
+
+<header class="topbar">
+  <div class="brand">IdiomLens <span>demo</span></div>
+  <div class="pill" id="status">Камера вимкнена</div>
+</header>
+
+<!-- Екран «Відсканувати картку» (NFR1.1) -->
+<section id="start">
+  <div class="hero">
+    <div class="frame-demo"><div class="corners"></div></div>
+    <h1>Відсканувати картку</h1>
+    <p>Наведіть рамку на AR-маркер картки. Тримайте телефон на відстані 15–40 см при хорошому освітленні.</p>
+  </div>
+  <button class="btn light" id="startBtn">Сканувати</button>
+  <div class="note">Браузер попросить доступ до камери</div>
+</section>
+
+<div id="scanFrame" class="hidden"><div class="corners"></div><div class="line"></div></div>
+<div id="hint" class="hidden">Наведіть рамку на AR-маркер картки<small>Картка має повністю потрапити в кадр</small></div>
+
+<!-- Екран «Ідіома» (NFR1.2–NFR1.4) -->
+<section class="sheet" id="idiomSheet" aria-live="polite">
+  <div class="grabber"></div>
+  <div class="sheet-head">
+    <span class="label">Ідіома</span>
+    <span class="found">Картку розпізнано</span>
+  </div>
+  <h2 class="idiom-name" id="idiomName"></h2>
+  <button class="btn" id="speakBtn"><span class="play-ico"></span>Прослухати вимову</button>
+  <div class="meaning-box">
+    <span class="label">Значення</span>
+    <p id="idiomMeaning"></p>
+  </div>
+  <div class="stack">
+    <button class="btn ghost" id="contextBtn">Приклад у контексті</button>
+    <button class="btn ghost" id="rescanBtn">Сканувати іншу картку</button>
+  </div>
+</section>
+
+<!-- Екран «Приклад у контексті» (FR2) -->
+<section class="sheet" id="contextSheet">
+  <div class="grabber"></div>
+  <div class="sheet-head">
+    <button class="back" id="backBtn" aria-label="Назад">‹</button>
+    <span class="label">Приклад у контексті</span>
+  </div>
+  <h2 class="idiom-name" id="ctxName" style="font-size:26px;margin-bottom:4px"></h2>
+  <div class="video-wrap" id="videoWrap"></div>
+  <div class="src">Приклад речення</div>
+  <blockquote id="ctxLine"></blockquote>
+  <div class="expl">
+    <h3>Коли вживають</h3>
+    <p id="ctxSituation"></p>
+    <h3>Що означає</h3>
+    <p id="ctxInterpretation"></p>
+  </div>
+  <a class="yt-link hidden" id="ytLink" target="_blank" rel="noopener">Відкрити на YouTube</a>
+</section>
+
+<div id="toast"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { MindARThree } from 'mindar-image-three';
+
+// Дані ідіом: індекс відповідає порядку зображень у targets.mind
+// (break-the-ice, spill-the-beans, hit-the-books), як таблиці idioms/markers у БД ЛР6.
+// videoId і start – посилання на YouTube (зовнішній сервіс медіаконтенту, NFR2.5).
+const IDIOMS = [
+  {
+    name: 'Break the ice',
+    meaning: 'зняти напругу, почати розмову в незнайомій компанії',
+    color: 0x134a8c,
+    videoId: 'SxlFu4XKb10', start: 0,
+    line: 'Let me tell a joke to break the ice.',
+    situation: 'Люди вперше зустрілися й ніяково мовчать; хтось робить перший крок, щоб розпочати розмову.',
+    interpretation: 'Розрядити атмосферу й почати спілкування.'
+  },
+  {
+    name: 'Spill the beans',
+    meaning: 'розкрити таємницю, проговоритися',
+    color: 0x7a3414,
+    videoId: 'ReTB2vTqATc', start: 0,
+    line: 'Come on, spill the beans!',
+    situation: 'Хтось приховує новину чи секрет, а друзі просять нарешті розповісти.',
+    interpretation: 'Розповісти секрет, який досі тримали в таємниці.'
+  },
+  {
+    name: 'Hit the books',
+    meaning: 'старанно вчитися, засісти за підручники',
+    color: 0x276332,
+    videoId: 'cHvKQeXdkAU', start: 0,
+    line: 'Exams start on Monday, so I have to hit the books.',
+    situation: 'Наближаються іспити чи важлива перевірка, і людина відкладає розваги заради навчання.',
+    interpretation: 'Серйозно взятися за навчання.'
+  }
+];
+
+const $ = (id) => document.getElementById(id);
+const startScreen = $('start'), scanFrame = $('scanFrame'), hint = $('hint');
+const idiomSheet = $('idiomSheet'), contextSheet = $('contextSheet');
+let mindar = null, current = null, running = false;
+
+function toast(msg, ms = 3200) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+function setScanning(on) {
+  scanFrame.classList.toggle('hidden', !on);
+  hint.classList.toggle('hidden', !on);
+}
+function setStatus(text) { $('status').textContent = text; }
+
+// Рамка навколо розпізнаної картки (3D-шар доповненої реальності)
+function cardOutline(color) {
+  const group = new THREE.Group();
+  const h = 1260 / 900; // пропорції картки
+  const fill = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, h),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18 })
+  );
+  group.add(fill);
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(1.04, h + 0.04)),
+    new THREE.LineBasicMaterial({ color: 0x7fd1ff })
+  );
+  group.add(edges);
+  return group;
+}
+
+function showIdiom(i) {
+  current = i;
+  const d = IDIOMS[i];
+  $('idiomName').textContent = d.name;
+  $('idiomMeaning').textContent = d.meaning;
+  contextSheet.classList.remove('open');
+  idiomSheet.classList.add('open');
+  setScanning(false);
+  setStatus('Картку розпізнано');
+  if (navigator.vibrate) navigator.vibrate(30);
+}
+
+function speak() {
+  if (current === null) return;
+  const synth = window.speechSynthesis;
+  if (!synth) { toast('Цей браузер не підтримує відтворення вимови'); return; }
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance(IDIOMS[current].name);
+  u.lang = 'en-US'; u.rate = 0.85;
+  const voice = synth.getVoices().find(v => v.lang && v.lang.startsWith('en'));
+  if (voice) u.voice = voice;
+  synth.speak(u);
+}
+
+function showContext() {
+  const d = IDIOMS[current];
+  $('ctxName').textContent = d.name;
+  $('ctxLine').textContent = '«' + d.line + '»';
+  $('ctxSituation').textContent = d.situation;
+  $('ctxInterpretation').textContent = d.interpretation;
+  const wrap = $('videoWrap'); wrap.innerHTML = '';
+  const link = $('ytLink');
+  if (d.videoId) {
+    const f = document.createElement('iframe');
+    f.src = `https://www.youtube-nocookie.com/embed/${d.videoId}?start=${d.start}&autoplay=1&playsinline=1&rel=0`;
+    f.allow = 'autoplay; encrypted-media; picture-in-picture';
+    f.allowFullscreen = true;
+    wrap.appendChild(f);
+    link.href = `https://www.youtube.com/watch?v=${d.videoId}&t=${d.start}`;
+    link.classList.remove('hidden');
+  } else {
+    wrap.innerHTML = '<div class="video-empty">Відеоуривок ще не додано</div>';
+    link.classList.add('hidden');
+  }
+  idiomSheet.classList.remove('open');
+  contextSheet.classList.add('open');
+}
+
+function backToIdiom() {
+  $('videoWrap').innerHTML = '';
+  contextSheet.classList.remove('open');
+  idiomSheet.classList.add('open');
+}
+
+function rescan() {
+  window.speechSynthesis && window.speechSynthesis.cancel();
+  $('videoWrap').innerHTML = '';
+  idiomSheet.classList.remove('open');
+  contextSheet.classList.remove('open');
+  current = null;
+  setScanning(true);
+  setStatus('Пошук AR-маркера…');
+}
+
+async function start() {
+  if (running) return;
+  const btn = $('startBtn');
+  btn.disabled = true; btn.textContent = 'Запуск камери…';
+  if (!window.isSecureContext) {
+    toast('Камера працює лише через HTTPS');
+  }
+  try {
+    mindar = new MindARThree({
+      container: $('ar'),
+      imageTargetSrc: './targets.mind',
+      maxTrack: 1,
+      uiLoading: 'no', uiScanning: 'no', uiError: 'no',
+      filterMinCF: 0.0001, filterBeta: 0.001
+    });
+    const { renderer, scene, camera } = mindar;
+    IDIOMS.forEach((d, i) => {
+      const anchor = mindar.addAnchor(i);
+      anchor.group.add(cardOutline(d.color));
+      anchor.onTargetFound = () => { if (current !== i) showIdiom(i); };
+      anchor.onTargetLost = () => { if (current === null) setStatus('Пошук AR-маркера…'); };
+    });
+    await mindar.start();
+    renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    running = true;
+    startScreen.classList.add('hidden');
+    setScanning(true);
+    setStatus('Пошук AR-маркера…');
+  } catch (e) {
+    console.error(e);
+    btn.disabled = false; btn.textContent = 'Сканувати';
+    toast('Не вдалося увімкнути камеру. Дозвольте доступ до камери в налаштуваннях браузера.', 5000);
+  }
+}
+
+$('startBtn').addEventListener('click', start);
+$('speakBtn').addEventListener('click', speak);
+$('contextBtn').addEventListener('click', showContext);
+$('backBtn').addEventListener('click', backToIdiom);
+$('rescanBtn').addEventListener('click', rescan);
+// Голоси завантажуються асинхронно
+if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = () => {};
+</script>
+</body>
+</html>
