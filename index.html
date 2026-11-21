@@ -108,6 +108,15 @@
     color: #fff; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.6);
   }
   #hint small { display: block; font-weight: 400; opacity: .85; margin-top: 4px; }
+  #hint { bottom: calc(env(safe-area-inset-bottom) + 96px); }
+  #scanBar {
+    position: fixed; z-index: 10; left: 16px; right: 16px;
+    bottom: calc(env(safe-area-inset-bottom) + 20px);
+  }
+  #scanFrame .line { display: none; }
+  #scanFrame.active .line { display: block; }
+  #scanFrame.active::before, #scanFrame.active::after,
+  #scanFrame.active .corners::before, #scanFrame.active .corners::after { border-color: #7fd1ff; }
 
   /* Нижня панель (NFR1.2–NFR1.4, FR2) */
   .sheet {
@@ -167,12 +176,13 @@
     <h1>Відсканувати картку</h1>
     <p>Наведіть рамку на AR-маркер картки. Тримайте телефон на відстані 15–40 см при хорошому освітленні.</p>
   </div>
-  <button class="btn light" id="startBtn">Сканувати</button>
+  <button class="btn light" id="startBtn">Увімкнути камеру</button>
   <div class="note">Браузер попросить доступ до камери</div>
 </section>
 
 <div id="scanFrame" class="hidden"><div class="corners"></div><div class="line"></div></div>
-<div id="hint" class="hidden">Наведіть рамку на AR-маркер картки<small>Картка має повністю потрапити в кадр</small></div>
+<div id="hint" class="hidden">Наведіть рамку на AR-маркер картки<small>і торкніться кнопки «Сканувати»</small></div>
+<div id="scanBar" class="hidden"><button class="btn light" id="scanBtn">Сканувати</button></div>
 
 <!-- Екран «Ідіома» (NFR1.2–NFR1.4) -->
 <section class="sheet" id="idiomSheet" aria-live="polite">
@@ -268,8 +278,14 @@ const $ = (id) => document.getElementById(id);
 const startScreen = $('start'), scanFrame = $('scanFrame'), hint = $('hint');
 const idiomSheet = $('idiomSheet'), contextSheet = $('contextSheet');
 let mindar = null, current = null, running = false;
-// Вимірювання для тестів на прийняття: час від початку сканування до розпізнавання
-let scanStart = null;
+// Стан сканування: AR-маркер приймається лише після дотику до кнопки «Сканувати» (NFR1.6)
+let visible = null;      // індекс картки, яка зараз у кадрі
+let scanning = false;    // чи очікуємо результат після дотику до «Сканувати»
+let scanTimer = null;
+const SCAN_TIMEOUT_MS = 10000;
+// Вимірювання для тестів на прийняття:
+// scanStart – дотик до «Сканувати»; cameraShownAt – показ екрана камери (уся дія користувача)
+let scanStart = null, cameraShownAt = null;
 
 function toast(msg, ms = 3200) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
@@ -278,6 +294,36 @@ function toast(msg, ms = 3200) {
 function setScanning(on) {
   scanFrame.classList.toggle('hidden', !on);
   hint.classList.toggle('hidden', !on);
+  $('scanBar').classList.toggle('hidden', !on);
+}
+function resetScanButton() {
+  scanning = false;
+  clearTimeout(scanTimer);
+  scanFrame.classList.remove('active');
+  const b = $('scanBtn'); b.disabled = false; b.textContent = 'Сканувати';
+}
+// Екран «Відсканувати картку» з камерою: очікуємо дотику до «Сканувати»
+function showCamera() {
+  resetScanButton();
+  setScanning(true);
+  setStatus('Камера увімкнена');
+  cameraShownAt = performance.now();
+}
+// Дотик до «Сканувати»: передача зображення AR-маркера (FR1.1)
+function beginScan() {
+  if (scanning) return;
+  scanning = true;
+  scanStart = performance.now();
+  scanFrame.classList.add('active');
+  const b = $('scanBtn'); b.disabled = true; b.textContent = 'Пошук AR-маркера…';
+  setStatus('Пошук AR-маркера…');
+  if (visible !== null) { showIdiom(visible); return; }
+  scanTimer = setTimeout(() => {
+    if (!scanning) return;
+    resetScanButton();
+    setStatus('Камера увімкнена');
+    toast('AR-маркер не знайдено. Наведіть рамку на картку так, щоб вона повністю потрапила в кадр, на відстані 15–40 см при хорошому освітленні.', 6000);
+  }, SCAN_TIMEOUT_MS);
 }
 function setStatus(text) { $('status').textContent = text; }
 
@@ -307,15 +353,17 @@ function showIdiom(i) {
   audioPlayer.load();
   contextSheet.classList.remove('open');
   idiomSheet.classList.add('open');
+  resetScanButton();
   setScanning(false);
   setStatus('Картку розпізнано');
-  if (scanStart !== null) {
-    const sec = (performance.now() - scanStart) / 1000;
-    $('foundLabel').textContent = 'Розпізнано за ' + sec.toFixed(1).replace('.', ',') + ' с';
-    scanStart = null;
+  const now = performance.now();
+  const fmt = (ms) => (ms / 1000).toFixed(1).replace('.', ',');
+  if (scanStart !== null && cameraShownAt !== null) {
+    $('foundLabel').textContent = 'Розпізнано за ' + fmt(now - scanStart) + ' с · уся дія ' + fmt(now - cameraShownAt) + ' с';
   } else {
     $('foundLabel').textContent = 'Картку розпізнано';
   }
+  scanStart = null;
   if (navigator.vibrate) navigator.vibrate(30);
 }
 
@@ -408,9 +456,7 @@ function rescan() {
   idiomSheet.classList.remove('open');
   contextSheet.classList.remove('open');
   current = null;
-  setScanning(true);
-  setStatus('Пошук AR-маркера…');
-  scanStart = performance.now();
+  showCamera();
 }
 
 async function start() {
@@ -432,24 +478,23 @@ async function start() {
     IDIOMS.forEach((d, i) => {
       const anchor = mindar.addAnchor(i);
       anchor.group.add(cardOutline(d.color));
-      anchor.onTargetFound = () => { if (current !== i) showIdiom(i); };
-      anchor.onTargetLost = () => { if (current === null) setStatus('Пошук AR-маркера…'); };
+      anchor.onTargetFound = () => { visible = i; if (scanning) showIdiom(i); };
+      anchor.onTargetLost = () => { if (visible === i) visible = null; };
     });
     await mindar.start();
     renderer.setAnimationLoop(() => renderer.render(scene, camera));
     running = true;
     startScreen.classList.add('hidden');
-    setScanning(true);
-    setStatus('Пошук AR-маркера…');
-    scanStart = performance.now();
+    showCamera();
   } catch (e) {
     console.error(e);
-    btn.disabled = false; btn.textContent = 'Сканувати';
+    btn.disabled = false; btn.textContent = 'Увімкнути камеру';
     toast('Не вдалося увімкнути камеру. Дозвольте доступ до камери в налаштуваннях браузера.', 5000);
   }
 }
 
 $('startBtn').addEventListener('click', start);
+$('scanBtn').addEventListener('click', beginScan);
 $('speakBtn').addEventListener('click', play);
 $('contextBtn').addEventListener('click', showContext);
 $('backBtn').addEventListener('click', backToIdiom);
